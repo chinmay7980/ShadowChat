@@ -1,10 +1,10 @@
 # ShadowChat - Hackathon Submission (Klymo Ascent 1.0)
 
-AnonChat is a privacy-first, real-time, 1-to-1 anonymous chat platform with AI-backed human verification, safety controls, and a Redis-powered matchmaking queue. The system is built to be stateless for chat content and scalable across multiple server instances.
+ShadowChat is a privacy-first, real-time, 1-to-1 anonymous chat platform with AI-backed human verification, safety controls, and a Redis-powered matchmaking queue. The system is built to be stateless for chat content and scalable across multiple server instances.
 
 ## What This Project Delivers
 
-AnonChat focuses on "controlled anonymity": users remain anonymous, but the platform enforces safety and fairness via verification, rate limits, and abuse prevention.
+ShadowChat focuses on "controlled anonymity": users remain anonymous, but the platform enforces safety and fairness via verification, rate limits, and abuse prevention.
 
 Key goals achieved:
 1. Anonymous onboarding with no accounts.
@@ -28,7 +28,7 @@ Key goals achieved:
 
 ## Privacy-First Design (Deep Dive)
 
-AnonChat is designed to minimize data retention while still keeping the system safe.
+ShadowChat is designed to minimize data retention while still keeping the system safe.
 
 ### 1. No server-side chat history
 Chat messages are never written to disk or stored in any database. Messages are transmitted via Socket.IO and exist only:
@@ -112,7 +112,7 @@ Chat content is never stored.
 ```mermaid
 flowchart LR
   A["Client (Next.js)"] -->|Socket.IO join_queue| B["Node.js Server"]
-  B -->|LPUSH user payload| C["Redis Queue anonchat:queue"]
+  B -->|LPUSH user payload| C["Redis Queue ShadowChat:queue"]
   B -->|LRANGE top 50| C
   B -->|Compatibility and block checks| B
   B -->|LREM matched partner| C
@@ -140,15 +140,15 @@ sequenceDiagram
 ## How the Redis Queue Works (Step-by-Step)
 
 1. **User joins queue**
-   `LPUSH anonchat:queue <userPayload>`
+   `LPUSH ShadowChat:queue <userPayload>`
 2. **Server scans top candidates**
-   `LRANGE anonchat:queue 0 49`
+   `LRANGE ShadowChat:queue 0 49`
 3. **Compatibility checks**
    Self-match prevention, gender preference match, blocks, and repeat prevention.
 4. **Socket validation**
    The server checks if the socket is still active.
 5. **Atomic removal**
-   `LREM anonchat:queue 1 <matchedPayload>`
+   `LREM ShadowChat:queue 1 <matchedPayload>`
 6. **Room created**
    Both clients receive `match_found` with the same room ID.
 7. **Queue cleanup on disconnect**
@@ -267,7 +267,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:3002
 
 ## Notes on Deletion and Ephemerality
 
-AnonChat does not store chat messages or images at rest. Deletion is achieved through:
+ShadowChat does not store chat messages or images at rest. Deletion is achieved through:
 1. In-memory processing for all verification images.
 2. Browser-only message state for chat.
 3. Explicit cleanup on chat exit.
@@ -281,7 +281,7 @@ Session teardown details:
 
 ## Hackathon Pitch Summary
 
-AnonChat proves that anonymous platforms can be safe by combining:
+ShadowChat proves that anonymous platforms can be safe by combining:
 1. Privacy-preserving AI verification.
 2. Stateless chat sessions.
 3. Redis-backed scalable matchmaking.
