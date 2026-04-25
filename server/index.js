@@ -82,28 +82,46 @@ function verifyVerificationToken(token) {
   }
 }
 
-// Redis Clients Configuration (Horizontal Scaling Layer)
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-const pubClient = createClient({ url: redisUrl });
-const subClient = pubClient.duplicate();
+// Redis Clients Configuration (Optional - falls back to in-memory for local dev)
+const redisUrl = process.env.REDIS_URL || '';
+let pubClient = null;
+let subClient = null;
+let redisAvailable = false;
 
-pubClient.on('error', (err) => console.error('Redis Pub Error:', err));
-subClient.on('error', (err) => console.error('Redis Sub Error:', err));
+if (redisUrl) {
+  pubClient = createClient({ url: redisUrl });
+  subClient = pubClient.duplicate();
 
-(async () => {
+  pubClient.on('error', (err) => { /* suppress noise — handled below */ });
+  subClient.on('error', (err) => { /* suppress noise — handled below */ });
+
+  (async () => {
     try {
-        await Promise.all([pubClient.connect(), subClient.connect()]);
-        console.log('Redis Layer: Successfully connected for Scaling-Out');
+      await Promise.all([pubClient.connect(), subClient.connect()]);
+      redisAvailable = true;
+      console.log('Redis Layer: Connected for horizontal scaling.');
     } catch (err) {
-        console.error('Redis Layer: Connection failed. Check your REDIS_URL.', err);
+      redisAvailable = false;
+      console.warn('Redis Layer: Unavailable — running in single-instance in-memory mode (local dev).');
     }
-})();
+  })();
+} else {
+  console.log('Redis Layer: No REDIS_URL set — running in-memory mode (local dev).');
+}
 
 
-// Redis State Migration Helpers (Phase 9)
+// ─── In-memory fallback stores (used when Redis is unavailable) ───────────────
+const memBans = new Map();          // deviceId -> banInfo
+const memBlocks = new Map();        // myDeviceId -> Set of blocked deviceIds
+const memMatchCounts = new Map();   // deviceId -> count
+const memReports = new Map();       // targetDeviceId -> Set of reporterDeviceIds
+let   memReportsTotal = 0;
+const memQueue = [];                // in-memory match queue
+// ─────────────────────────────────────────────────────────────────────────────
+
 const REDIS_KEYS = {
   BANS: 'anonchat:bans',
-  BLOCKS: 'anonchat:blocks:', // suffix with deviceId
+  BLOCKS: 'anonchat:blocks:',
   MATCH_COUNTS_PREFIX: 'anonchat:match_counts:',
   QUEUE: 'anonchat:queue',
   REPORTS_TOTAL: 'anonchat:reports:total',
@@ -116,32 +134,46 @@ function getDailyMatchKey() {
 }
 
 async function getBans(deviceId) {
+  if (!redisAvailable) return memBans.get(deviceId) || null;
   const ban = await pubClient.hGet(REDIS_KEYS.BANS, deviceId);
   return ban ? JSON.parse(ban) : null;
 }
 
 async function setBan(deviceId, banInfo) {
+  if (!redisAvailable) { memBans.set(deviceId, banInfo); return; }
   await pubClient.hSet(REDIS_KEYS.BANS, deviceId, JSON.stringify(banInfo));
 }
 
 async function clearBan(deviceId) {
+  if (!redisAvailable) { memBans.delete(deviceId); return; }
   await pubClient.hDel(REDIS_KEYS.BANS, deviceId);
 }
 
 async function isBlocked(myDeviceId, targetDeviceId) {
+  if (!redisAvailable) return (memBlocks.get(myDeviceId) || new Set()).has(targetDeviceId);
   return await pubClient.sIsMember(REDIS_KEYS.BLOCKS + myDeviceId, targetDeviceId);
 }
 
 async function addBlock(myDeviceId, targetDeviceId) {
+  if (!redisAvailable) {
+    if (!memBlocks.has(myDeviceId)) memBlocks.set(myDeviceId, new Set());
+    memBlocks.get(myDeviceId).add(targetDeviceId);
+    return;
+  }
   await pubClient.sAdd(REDIS_KEYS.BLOCKS + myDeviceId, targetDeviceId);
 }
 
 async function getMatchCount(deviceId) {
+  if (!redisAvailable) return memMatchCounts.get(deviceId) || 0;
   const count = await pubClient.hGet(getDailyMatchKey(), deviceId);
   return count ? parseInt(count) : 0;
 }
 
 async function incrementMatchCount(deviceId) {
+  if (!redisAvailable) {
+    memMatchCounts.set(deviceId, (memMatchCounts.get(deviceId) || 0) + 1);
+    return;
+  }
   const key = getDailyMatchKey();
   const multi = pubClient.multi();
   multi.hIncrBy(key, deviceId, 1);
@@ -150,12 +182,16 @@ async function incrementMatchCount(deviceId) {
 }
 
 async function recordReport(reporterDeviceId, targetDeviceId) {
+  if (!redisAvailable) {
+    if (!memReports.has(targetDeviceId)) memReports.set(targetDeviceId, new Set());
+    memReports.get(targetDeviceId).add(reporterDeviceId);
+    memReportsTotal++;
+    return memReports.get(targetDeviceId).size;
+  }
   const reportKey = `${REDIS_KEYS.REPORTS_SET_PREFIX}${targetDeviceId}`;
   await pubClient.sAdd(reportKey, reporterDeviceId);
   const uniqueReporters = await pubClient.sCard(reportKey);
-  if (uniqueReporters === 1) {
-    await pubClient.expire(reportKey, REPORT_TTL_SECONDS);
-  }
+  if (uniqueReporters === 1) await pubClient.expire(reportKey, REPORT_TTL_SECONDS);
   await pubClient.incr(REDIS_KEYS.REPORTS_TOTAL);
   return uniqueReporters;
 }
@@ -174,37 +210,35 @@ const metrics = {
 const reports = [];
 
 
-// Production-Ready Queue (Bucket D)
-// Production-Ready Redis-Backed Queue (Phase 9)
+// Match Queue — Redis when available, in-memory otherwise
 class RedisMatchQueue {
   constructor(io) {
     this.io = io;
   }
 
   async add(user) {
-    // Store full user data in Redis List as a JSON string
-    await pubClient.lPush(REDIS_KEYS.QUEUE, JSON.stringify({ ...user, timestamp: Date.now() }));
+    const entry = JSON.stringify({ ...user, timestamp: Date.now() });
+    if (!redisAvailable) {
+      memQueue.push(entry);
+      console.log(`Queue: Added ${user.nickname} (in-memory, ${memQueue.length} waiting).`);
+      return;
+    }
+    await pubClient.lPush(REDIS_KEYS.QUEUE, entry);
     console.log(`Queue: Added ${user.nickname} to Redis Pool.`);
   }
 
-  async remove(socketId) {
-    // In a multi-server environment, we don't have direct access to other servers' sockets.
-    // However, usually, a disconnect event on one server will trigger a cleanup.
-    // Since we store JSON, we'd need to fetch and filter, which is expensive.
-    // Optimization: Just filter during the matching process if the user is no longer connected.
-  }
-
   async removeBySocketId(socketId) {
+    if (!redisAvailable) {
+      const idx = memQueue.findIndex(item => { try { return JSON.parse(item).id === socketId; } catch { return false; } });
+      if (idx !== -1) memQueue.splice(idx, 1);
+      return;
+    }
     const queueData = await pubClient.lRange(REDIS_KEYS.QUEUE, 0, -1);
     for (const item of queueData) {
       try {
         const u = JSON.parse(item);
-        if (u.id === socketId) {
-          await pubClient.lRem(REDIS_KEYS.QUEUE, 0, item);
-        }
-      } catch (err) {
-        await pubClient.lRem(REDIS_KEYS.QUEUE, 0, item);
-      }
+        if (u.id === socketId) await pubClient.lRem(REDIS_KEYS.QUEUE, 0, item);
+      } catch { await pubClient.lRem(REDIS_KEYS.QUEUE, 0, item); }
     }
   }
 
@@ -214,42 +248,42 @@ class RedisMatchQueue {
   }
 
   async findMatch(user) {
-    // Fetch top 50 candidates from the global pool (Scaling optimization)
-    const queueData = await pubClient.lRange(REDIS_KEYS.QUEUE, 0, 49);
-    
+    const queueData = redisAvailable
+      ? await pubClient.lRange(REDIS_KEYS.QUEUE, 0, 49)
+      : [...memQueue];
+
     for (let i = 0; i < queueData.length; i++) {
-        let u;
-        try {
-          u = JSON.parse(queueData[i]);
-        } catch (err) {
-          await pubClient.lRem(REDIS_KEYS.QUEUE, 0, queueData[i]);
+      let u;
+      try { u = JSON.parse(queueData[i]); }
+      catch {
+        if (redisAvailable) await pubClient.lRem(REDIS_KEYS.QUEUE, 0, queueData[i]);
+        else memQueue.splice(memQueue.indexOf(queueData[i]), 1);
+        continue;
+      }
+
+      const selfMatch = u.id === user.id;
+      const allowSameDevice = true; // DEV OVERRIDE
+      const sameDevice = u.deviceId === user.deviceId;
+      const genderMatch = (user.matchPreference === 'Any' || u.gender === user.matchPreference);
+      const partnerPrefMatch = (u.matchPreference === 'Any' || user.gender === u.matchPreference);
+      const blocked = await isBlocked(user.deviceId, u.deviceId) || await isBlocked(u.deviceId, user.deviceId);
+      const isRepeat = user.lastPartnerId === u.deviceId || u.lastPartnerId === user.deviceId;
+
+      if (!selfMatch && (allowSameDevice || !sameDevice) && genderMatch && partnerPrefMatch && !blocked && !isRepeat) {
+        const stillConnected = await this.isSocketActive(u.id);
+        if (!stillConnected) {
+          if (redisAvailable) await pubClient.lRem(REDIS_KEYS.QUEUE, 0, queueData[i]);
+          else memQueue.splice(memQueue.indexOf(queueData[i]), 1);
           continue;
         }
-        
-        // Compatibility Checks
-        const selfMatch = u.id === user.id;
-        const sameDevice = u.deviceId === user.deviceId;
-        const allowSameDevice = true; // DEV OVERRIDE
-        
-        const genderMatch = (user.matchPreference === 'Any' || u.gender === user.matchPreference);
-        const partnerPrefMatch = (u.matchPreference === 'Any' || user.gender === u.matchPreference);
-        
-        const blocked = await isBlocked(user.deviceId, u.deviceId) || await isBlocked(u.deviceId, user.deviceId);
-        const isRepeat = user.lastPartnerId === u.deviceId || u.lastPartnerId === user.deviceId;
-
-        if (!selfMatch && (allowSameDevice || !sameDevice) && genderMatch && partnerPrefMatch && !blocked && !isRepeat) {
-            const stillConnected = await this.isSocketActive(u.id);
-            if (!stillConnected) {
-                await pubClient.lRem(REDIS_KEYS.QUEUE, 0, queueData[i]);
-                continue;
-            }
-            // Found a match! Try to remove them from the list atomically
-            const removedCount = await pubClient.lRem(REDIS_KEYS.QUEUE, 1, queueData[i]);
-            if (removedCount > 0) {
-                return u;
-            }
-            // If removedCount is 0, someone else snagged this partner. Continue searching.
+        if (redisAvailable) {
+          const removedCount = await pubClient.lRem(REDIS_KEYS.QUEUE, 1, queueData[i]);
+          if (removedCount > 0) return u;
+        } else {
+          const idx = memQueue.indexOf(queueData[i]);
+          if (idx !== -1) { memQueue.splice(idx, 1); return u; }
         }
+      }
     }
     return null;
   }
@@ -301,8 +335,10 @@ const io = new Server(httpServer, {
   transports: ['websocket', 'polling']
 });
 
-// Implementation of Redis Scaling Adapter (Phase 9)
-io.adapter(createAdapter(pubClient, subClient));
+// Redis adapter only when available (local dev uses default in-memory adapter)
+if (redisAvailable && pubClient && subClient) {
+  io.adapter(createAdapter(pubClient, subClient));
+}
 
 const matchQueue = new RedisMatchQueue(io);
 
@@ -345,7 +381,7 @@ io.on('connection', async (socket) => {
   }
 
   socket.on('join_queue', async (userData) => {
-    if (!pubClient.isReady) {
+    if (redisAvailable && !pubClient.isReady) {
       socket.emit('error', { message: 'Matchmaking is temporarily unavailable. Please try again shortly.' });
       return;
     }
@@ -521,12 +557,10 @@ io.on('connection', async (socket) => {
         socket.to(room).emit('partner_left');
       }
     });
-    if (pubClient.isReady) {
-      try {
-        await matchQueue.removeBySocketId(socket.id);
-      } catch (err) {
-        console.error('Queue cleanup error:', err);
-      }
+    try {
+      await matchQueue.removeBySocketId(socket.id);
+    } catch (err) {
+      console.error('Queue cleanup error:', err);
     }
     console.log('User disconnected:', socket.id);
   });
@@ -536,26 +570,35 @@ io.on('connection', async (socket) => {
  * Nuclear Reset (Phase 9 - Shared Reset)
  */
 app.get('/api/nuclear-reset', async (req, res) => {
-  const keys = await pubClient.keys('anonchat:*');
-  if (keys.length > 0) {
-    await pubClient.del(keys);
+  if (redisAvailable) {
+    const keys = await pubClient.keys('anonchat:*');
+    if (keys.length > 0) await pubClient.del(keys);
+  } else {
+    memBans.clear(); memBlocks.clear(); memMatchCounts.clear();
+    memReports.clear(); memQueue.length = 0; memReportsTotal = 0;
   }
-  reports.length = 0; // Local reports cleared on the hit server
-  console.log('STORM WARNING: Global Redis Reset Triggered.');
-  res.json({ success: true, message: 'All cross-server data wiped.' });
+  reports.length = 0;
+  console.log('STORM WARNING: Global Reset Triggered.');
+  res.json({ success: true, message: 'All data wiped.' });
 });
 
 /**
  * Phase 8/9: Admin Analytics API (Redis-Backed)
  */
 app.get('/api/admin/metrics', async (req, res) => {
-  const bansCount = await pubClient.hLen(REDIS_KEYS.BANS);
-  const queueSize = await pubClient.lLen(REDIS_KEYS.QUEUE);
-  const reportsTotal = parseInt((await pubClient.get(REDIS_KEYS.REPORTS_TOTAL)) || '0', 10);
-  
+  let bansCount, queueSize, reportsTotal;
+  if (redisAvailable) {
+    bansCount = await pubClient.hLen(REDIS_KEYS.BANS);
+    queueSize = await pubClient.lLen(REDIS_KEYS.QUEUE);
+    reportsTotal = parseInt((await pubClient.get(REDIS_KEYS.REPORTS_TOTAL)) || '0', 10);
+  } else {
+    bansCount = memBans.size;
+    queueSize = memQueue.length;
+    reportsTotal = memReportsTotal;
+  }
   res.json({
     technical: {
-      activeSessions: metrics.activeSessions, // Still local approximation
+      activeSessions: metrics.activeSessions,
       totalMatchesLife: metrics.totalMatches,
       queueThroughput: queueSize
     },
@@ -570,11 +613,11 @@ app.get('/api/admin/metrics', async (req, res) => {
  * Real-time Stats API (Redis-Backed)
  */
 app.get('/api/stats', async (req, res) => {
-  const queueSize = await pubClient.lLen(REDIS_KEYS.QUEUE);
-  // io.engine.clientsCount is local to this instance. 
-  // For true global online count, we'd need a Redis counter on connection/disconnection.
+  const queueSize = redisAvailable
+    ? await pubClient.lLen(REDIS_KEYS.QUEUE)
+    : memQueue.length;
   res.json({
-    onlineUsers: io.engine.clientsCount, 
+    onlineUsers: io.engine.clientsCount,
     waitingInQueue: queueSize
   });
 });
@@ -582,9 +625,10 @@ app.get('/api/stats', async (req, res) => {
 app.get('/healthz', async (req, res) => {
   res.json({
     status: 'ok',
+    mode: redisAvailable ? 'redis' : 'in-memory',
     redis: {
-      pubReady: pubClient.isReady,
-      subReady: subClient.isReady
+      pubReady: redisAvailable ? pubClient.isReady : false,
+      subReady: redisAvailable ? subClient.isReady : false
     }
   });
 });
@@ -698,10 +742,12 @@ httpServer.listen(PORT, '0.0.0.0', () => {
 
 const shutdown = async () => {
   console.log('Graceful shutdown initiated...');
-  try {
-    await Promise.all([pubClient.quit(), subClient.quit()]);
-  } catch (err) {
-    console.error('Error during Redis shutdown:', err);
+  if (redisAvailable && pubClient) {
+    try {
+      await Promise.all([pubClient.quit(), subClient.quit()]);
+    } catch (err) {
+      console.error('Error during Redis shutdown:', err);
+    }
   }
   httpServer.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 10000).unref();
