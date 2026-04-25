@@ -7,6 +7,7 @@ import { io, Socket } from 'socket.io-client';
 import { DeviceIdentity } from '@/lib/device';
 import SubHeader from '@/components/SubHeader';
 import { SOCKET_URL } from '@/lib/config';
+import Image from 'next/image';
 
 interface Message {
   senderId: string;
@@ -15,12 +16,17 @@ interface Message {
   timestamp: number;
 }
 
+interface Partner {
+  nickname: string;
+  deviceId: string;
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const { deviceId } = useUser();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [partner, setPartner] = useState<any>(null);
+  const [partner, setPartner] = useState<Partner | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const [ownId, setOwnId] = useState<string | null>(null);
@@ -217,7 +223,7 @@ export default function ChatPage() {
                 }`}>
                   {msg.image ? (
                     <div className="p-2">
-                      <img src={msg.image} alt="Shared" onLoad={scrollToBottom} className="rounded-xl w-full h-auto max-h-64 object-cover" />
+                      <Image src={msg.image} alt="Shared" unoptimized width={400} height={300} onLoad={scrollToBottom} className="rounded-xl w-full h-auto max-h-64 object-cover" />
                     </div>
                   ) : (
                     <div className="px-6 py-4">

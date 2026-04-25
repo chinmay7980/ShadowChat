@@ -39,7 +39,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
               setGenderVerified(true);
               setVerificationToken(parsed.token || null);
             }
-          } catch (err) {
+          } catch {
             localStorage.removeItem('anon_chat_verification');
           }
         }

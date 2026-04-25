@@ -35,7 +35,7 @@ export const DeviceIdentity = {
             const { count, date } = JSON.parse(data);
             const today = new Date().toDateString();
             return date === today ? count : 0;
-        } catch (e) {
+        } catch {
             return 0;
         }
     },

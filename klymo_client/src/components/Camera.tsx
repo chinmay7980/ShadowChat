@@ -10,7 +10,7 @@ interface CameraProps {
   deviceId: string | null;
 }
 
-export default function Camera({ onCapture, isVerifying, completeVerification, deviceId }: CameraProps) {
+export default function Camera({ onCapture, completeVerification, deviceId }: Omit<CameraProps, 'isVerifying'>) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -131,7 +131,7 @@ export default function Camera({ onCapture, isVerifying, completeVerification, d
         <div className="camera-container">
           {!cameraStarted && !error && (
             <div className="placeholder-message">
-              <p>Click "Start Camera" to begin</p>
+              <p>Click &quot;Start Camera&quot; to begin</p>
             </div>
           )}
           

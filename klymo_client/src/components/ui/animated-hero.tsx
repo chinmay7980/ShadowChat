@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { MoveRight, ShieldCheck } from "lucide-react";
+import { MoveRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from 'next/link';
 
@@ -76,7 +76,7 @@ function AnimatedHero() {
 
             <p className="text-lg md:text-xl leading-relaxed tracking-tight text-[#757575] max-w-2xl text-center font-medium mt-4">
               No accounts, no history, and no trackers. Just simple, friendly 
-              conversations that disappear when you're done.
+              conversations that disappear when you&apos;re done.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-4 mt-6">

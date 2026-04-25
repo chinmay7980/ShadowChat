@@ -12,11 +12,10 @@ let socket: Socket;
 export default function MatchingPage() {
   const router = useRouter();
   const { nickname, gender, matchPreference, deviceId, bio, genderVerified, verificationToken } = useUser();
-  const [status, setStatus] = useState('Searching...');
+  const [status, setStatus] = useState('Initializing...');
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    setStatus('Initializing...');
     socket = io(SOCKET_URL, {
       reconnection: true,
       reconnectionAttempts: 10,

@@ -16,11 +16,16 @@ export default function ProfilePage() {
   const [localBio, setLocalBio] = useState(bio);
   const [localPreference, setLocalPreference] = useState(matchPreference);
   const [error, setError] = useState('');
-  const [matchesLeft, setMatchesLeft] = useState<number | null>(null);
+  const [matchesLeft] = useState<number | null>(() => {
+    if (typeof window !== 'undefined') {
+      const count = DeviceIdentity.getMatchCount();
+      return 100 - count;
+    }
+    return null;
+  });
 
   useEffect(() => {
-    const count = DeviceIdentity.getMatchCount();
-    setMatchesLeft(100 - count);
+    // Initialized in useState
   }, []);
 
   const handleStartMatching = (e: React.FormEvent) => {

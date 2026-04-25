@@ -14,7 +14,7 @@ export default function LandingPage() {
         const res = await fetch(`${API_BASE_URL}/api/stats`);
         const data = await res.json();
         setStats(data);
-      } catch (e) {
+      } catch {
         console.log("Stats offline");
       }
     };

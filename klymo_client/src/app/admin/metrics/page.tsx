@@ -34,7 +34,7 @@ export default function AdminMetricsPage() {
         const data = await res.json();
         setMetrics(data);
         setLoading(false);
-      } catch (e) {
+      } catch {
         console.error("Metrics offline");
       }
     };
@@ -121,7 +121,7 @@ export default function AdminMetricsPage() {
   );
 }
 
-function MetricCard({ label, value, sub, highlight = false, color = "text-white" }: { label: string, value: any, sub: string, highlight?: boolean, color?: string }) {
+function MetricCard({ label, value, sub, highlight = false, color = "text-white" }: { label: string, value: string | number | undefined, sub: string, highlight?: boolean, color?: string }) {
   return (
     <div className="group">
       <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1 group-hover:text-blue-500 transition-colors">{label}</p>
