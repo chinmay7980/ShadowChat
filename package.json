@@ -4,12 +4,9 @@
   "description": "ShadowChat – Anonymous gender-verified chat app",
   "scripts": {
     "start": "concurrently --names \"SERVER,GENDER-AI,CLIENT\" --prefix-colors \"cyan,magenta,green\" \"npm run start:server\" \"npm run start:ai\" \"npm run start:client\"",
-    "dev": "concurrently --names \"SERVER,GENDER-AI,CLIENT\" --prefix-colors \"cyan,magenta,green\" \"npm run dev:server\" \"npm run start:ai\" \"npm run dev:client\"",
-    "start:server": "cd server && npm start",
+    "start:server": "cd server && node index.js",
     "start:ai": "cd server/gender-service && python3 main.py",
-    "start:client": "cd klymo_client && npm start",
-    "dev:server": "cd server && npm run dev",
-    "dev:client": "cd klymo_client && npm run dev",
+    "start:client": "cd klymo_client && npm run dev",
     "install:all": "npm install && cd server && npm install && cd ../klymo_client && npm install"
   },
   "devDependencies": {
