@@ -21,14 +21,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 video: { width: 640, height: 640, facingMode: "user" }
             });
             video.srcObject = stream;
-            
+
             // UI Updates
             placeholder.style.display = "none";
             startBtn.disabled = true;
             verifyBtn.disabled = false;
             startBtn.innerText = "Camera Active";
             systemStatus.innerHTML = "<span class=\"dot\" style=\"color:#10b981\"></span> Camera Ready";
-            
+
         } catch (err) {
             console.error("Error accessing camera:", err);
             alert("Could not access camera. Please allow camera permissions.");
@@ -79,7 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 loader.classList.add("hidden");
                 resultContent.classList.remove("hidden");
                 verifyBtn.disabled = false;
-                
+
                 displayError("Connection failed. Is the backend running?");
             }
         }, "image/jpeg", 0.95);
