@@ -1,4 +1,4 @@
-# AnonChat - Hackathon Submission (Klymo Ascent 1.0)
+# ShadowChat - Hackathon Submission (Klymo Ascent 1.0)
 
 AnonChat is a privacy-first, real-time, 1-to-1 anonymous chat platform with AI-backed human verification, safety controls, and a Redis-powered matchmaking queue. The system is built to be stateless for chat content and scalable across multiple server instances.
 
